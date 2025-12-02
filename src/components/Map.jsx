@@ -534,8 +534,168 @@ function SelectionBox({ mode, onSelectionComplete, onUnselectionComplete, onMeas
   return null;
 }
 
+// SS Station coordinates (from text2.geojson)
+const SS_STATIONS = {
+  SS1: [-1.657385735167627, 52.685184527503822],
+  SS2: [-1.658778597831879, 52.683702838735101],
+  SS3: [-1.660892033311022, 52.686941496854956],
+  SS4: [-1.661595465931238, 52.68852372875844],
+  SS5: [-1.669201311299513, 52.685463263206088],
+  SS6: [-1.667897742722671, 52.688613796702931],
+  CSS: [-1.654334831002414, 52.685259188363439]
+};
+
+// Segment definitions between SS stations (only the requested 6 segments)
+const SS_SEGMENTS = [
+  { id: 'SS6-SS3', from: 'SS6', to: 'SS3', label: 'SS6-SS3' },
+  { id: 'SS5-SS2', from: 'SS5', to: 'SS2', label: 'SS5-SS2' },
+  { id: 'SS4-SS1', from: 'SS4', to: 'SS1', label: 'SS4-SS1' },
+  { id: 'SS1-CSS', from: 'SS1', to: 'CSS', label: 'SS1-CSS' },
+  { id: 'SS2-CSS', from: 'SS2', to: 'CSS', label: 'SS2-CSS' },
+  { id: 'SS3-CSS', from: 'SS3', to: 'CSS', label: 'SS3-CSS' }
+];
+
+// Build graph from TRENCH-LINE segments for path finding
+const buildTrenchLineGraph = (trenchLineData) => {
+  if (!trenchLineData) return { nodes: {}, edges: [], nodeCount: 0 };
+  
+  const nodes = {}; // key: "lng,lat", value: { index, coord }
+  let nodeIndex = 0;
+  const edges = []; // { from: nodeIdx, to: nodeIdx, length: meters, coords: [start, end] }
+  const tolerance = 0.000005; // ~0.5m tolerance for coordinate matching
+  
+  // Round coordinates to find nearby points
+  const roundCoord = (val) => Math.round(val / tolerance) * tolerance;
+  const getNodeKey = (coord) => `${roundCoord(coord[0]).toFixed(7)},${roundCoord(coord[1]).toFixed(7)}`;
+  
+  const getOrCreateNode = (coord) => {
+    const key = getNodeKey(coord);
+    if (!nodes[key]) {
+      nodes[key] = { index: nodeIndex++, coord: coord };
+    }
+    return nodes[key].index;
+  };
+  
+  trenchLineData.features.forEach((feature) => {
+    if (feature.properties && feature.properties.layer === "Base Zanjas MT_CIVIL_H$0$C-STRM-CNTR") {
+      const coords = feature.geometry.coordinates;
+      for (let i = 0; i < coords.length - 1; i++) {
+        const fromNode = getOrCreateNode(coords[i]);
+        const toNode = getOrCreateNode(coords[i + 1]);
+        const length = calculateDistance(coords[i], coords[i + 1]);
+        
+        edges.push({
+          from: fromNode,
+          to: toNode,
+          length: length,
+          coords: [coords[i], coords[i + 1]]
+        });
+      }
+    }
+  });
+  
+  return { nodes, edges, nodeCount: nodeIndex };
+};
+
+// Find nearest node in graph to a given coordinate
+const findNearestNode = (coord, nodes) => {
+  let minDist = Infinity;
+  let nearestNode = null;
+  
+  Object.values(nodes).forEach((nodeData) => {
+    const dist = calculateDistance(coord, nodeData.coord);
+    if (dist < minDist) {
+      minDist = dist;
+      nearestNode = nodeData.index;
+    }
+  });
+  
+  return { nodeIndex: nearestNode, distance: minDist };
+};
+
+// Dijkstra's algorithm to find shortest path between two nodes
+const findShortestPath = (graph, startNodeIdx, endNodeIdx) => {
+  const { nodes, edges, nodeCount } = graph;
+  
+  if (startNodeIdx === null || endNodeIdx === null || nodeCount === 0) return { path: [], length: 0, segments: [] };
+  
+  // Build adjacency list
+  const adjacency = {};
+  for (let i = 0; i < nodeCount; i++) {
+    adjacency[i] = [];
+  }
+  
+  edges.forEach((edge, edgeIdx) => {
+    adjacency[edge.from].push({ to: edge.to, length: edge.length, edgeIdx });
+    adjacency[edge.to].push({ to: edge.from, length: edge.length, edgeIdx }); // Bidirectional
+  });
+  
+  // Dijkstra
+  const dist = new Array(nodeCount).fill(Infinity);
+  const prev = new Array(nodeCount).fill(-1);
+  const prevEdge = new Array(nodeCount).fill(-1);
+  const visited = new Array(nodeCount).fill(false);
+  
+  dist[startNodeIdx] = 0;
+  
+  for (let i = 0; i < nodeCount; i++) {
+    // Find minimum distance unvisited node
+    let minDist = Infinity;
+    let u = -1;
+    for (let j = 0; j < nodeCount; j++) {
+      if (!visited[j] && dist[j] < minDist) {
+        minDist = dist[j];
+        u = j;
+      }
+    }
+    
+    if (u === -1 || u === endNodeIdx) break;
+    
+    visited[u] = true;
+    
+    // Update distances to neighbors
+    adjacency[u].forEach(({ to, length, edgeIdx }) => {
+      if (!visited[to] && dist[u] + length < dist[to]) {
+        dist[to] = dist[u] + length;
+        prev[to] = u;
+        prevEdge[to] = edgeIdx;
+      }
+    });
+  }
+  
+  // Reconstruct path
+  if (dist[endNodeIdx] === Infinity) return { path: [], length: 0, segments: [] };
+  
+  const path = [];
+  const segments = [];
+  let current = endNodeIdx;
+  
+  while (current !== startNodeIdx && prev[current] !== -1) {
+    path.unshift(current);
+    if (prevEdge[current] !== -1) {
+      segments.unshift(edges[prevEdge[current]]);
+    }
+    current = prev[current];
+  }
+  path.unshift(startNodeIdx);
+  
+  return { path, length: dist[endNodeIdx], segments };
+};
+
+// Calculate path length between two SS stations following TRENCH-LINE
+const calculatePathLength = (fromStationCoord, toStationCoord, graph) => {
+  if (!graph || graph.nodeCount === 0) return { length: 0, segments: [] };
+  
+  const startNearest = findNearestNode(fromStationCoord, graph.nodes);
+  const endNearest = findNearestNode(toStationCoord, graph.nodes);
+  
+  const result = findShortestPath(graph, startNearest.nodeIndex, endNearest.nodeIndex);
+  
+  return { length: result.length, segments: result.segments };
+};
+
 export default function Map() {
-  const [geoJsonData, setGeoJsonData] = useState({ trench: null, text: null, trenchLine: null });
+  const [geoJsonData, setGeoJsonData] = useState({ trench: null, text: null, trenchLine: null, poli: null, text2: null });
   const [completedLength, setCompletedLength] = useState(0);
   const [totalLength, setTotalLength] = useState(0);
   const [selectedBounds, setSelectedBounds] = useState([]); // Array of bounds that have been selected
@@ -546,6 +706,8 @@ export default function Map() {
   const [mode, setMode] = useState('marking'); // 'marking' or 'measurement'
   const [lastMarkedLength, setLastMarkedLength] = useState(0); // Track last marked length for auto-fill
   const [showText, setShowText] = useState(true); // Toggle for text layer visibility
+  const [activeSegment, setActiveSegment] = useState(null); // Currently highlighted SS segment
+  const [segmentLengths, setSegmentLengths] = useState({}); // Calculated lengths for each segment
   const visibleLayersRef = useRef({});
   const mapRef = useRef(null);
   
@@ -597,6 +759,91 @@ export default function Map() {
       .catch((err) => {
         console.warn('Failed to load TRENCH-LINE.geojson:', err);
       });
+
+    // Load poli.geojson
+    fetch("/poli.geojson")
+      .then((res) => res.json())
+      .then((data) => {
+        setGeoJsonData(prev => ({ ...prev, poli: data }));
+      })
+      .catch((err) => {
+        console.warn('Failed to load poli.geojson:', err);
+      });
+
+    // Load text2.geojson
+    fetch("/text2.geojson")
+      .then((res) => res.json())
+      .then((data) => {
+        setGeoJsonData(prev => ({ ...prev, text2: data }));
+      })
+      .catch((err) => {
+        console.warn('Failed to load text2.geojson:', err);
+      });
+  }, []);
+
+  // Calculate segment lengths when trenchLine data is loaded
+  useEffect(() => {
+    if (!geoJsonData.trenchLine) return;
+
+    // Build graph from TRENCH-LINE data
+    const graph = buildTrenchLineGraph(geoJsonData.trenchLine);
+    console.log('Graph built:', { nodeCount: graph.nodeCount, edgeCount: graph.edges.length });
+    
+    const lengths = {};
+    SS_SEGMENTS.forEach(seg => {
+      const fromCoord = SS_STATIONS[seg.from];
+      const toCoord = SS_STATIONS[seg.to];
+      const result = calculatePathLength(fromCoord, toCoord, graph);
+      console.log(`${seg.id}: length=${result.length.toFixed(2)}m, segments=${result.segments.length}`);
+      lengths[seg.id] = result.length;
+    });
+    setSegmentLengths(lengths);
+  }, [geoJsonData.trenchLine]);
+
+  // Get line segments between two SS stations (following the actual path)
+  const getSegmentsBetweenStations = useCallback((fromStation, toStation) => {
+    if (!geoJsonData.trenchLine) return [];
+    
+    const fromCoord = SS_STATIONS[fromStation];
+    const toCoord = SS_STATIONS[toStation];
+    
+    // Build graph and find path
+    const graph = buildTrenchLineGraph(geoJsonData.trenchLine);
+    const result = calculatePathLength(fromCoord, toCoord, graph);
+    
+    // Convert path segments to the format expected by the UI
+    return result.segments.map(seg => ({
+      start: seg.coords[0],
+      end: seg.coords[1]
+    }));
+  }, [geoJsonData.trenchLine]);
+
+  // Generate GeoJSON for highlighted segment
+  const highlightedSegmentGeoJson = useCallback(() => {
+    if (!activeSegment) return null;
+    
+    const segment = SS_SEGMENTS.find(s => s.id === activeSegment);
+    if (!segment) return null;
+    
+    const segments = getSegmentsBetweenStations(segment.from, segment.to);
+    if (segments.length === 0) return null;
+    
+    return {
+      type: "FeatureCollection",
+      features: segments.map((seg, idx) => ({
+        type: "Feature",
+        properties: { index: idx },
+        geometry: {
+          type: "LineString",
+          coordinates: [seg.start, seg.end]
+        }
+      }))
+    };
+  }, [activeSegment, getSegmentsBetweenStations]);
+
+  // Style for highlighted segment
+  const highlightedSegmentStyle = useCallback(() => {
+    return { color: '#00FFFF', weight: 8, opacity: 1 }; // Cyan color for highlight
   }, []);
 
   // Calculate remaining length
@@ -863,6 +1110,10 @@ export default function Map() {
     return { color: '#FFD700', weight: 5, opacity: 1 }; // Bright Yellow
   }, []);
 
+  const poliStyle = useCallback((feature) => {
+    return { color: '#FF00FF', weight: 2, opacity: 0.8 }; // Magenta/Purple
+  }, []);
+
   const createTextIcon = (text) => {
     return new DivIcon({
       html: `<div style="font-size: 12px; font-weight: bold; color: black; background: rgba(255,255,255,0.8); padding: 2px 4px; border-radius: 3px; border: 1px solid #333; white-space: nowrap;">${text}</div>`,
@@ -874,6 +1125,98 @@ export default function Map() {
 
   return (
     <div style={{ height: "100vh", width: "100%", position: "relative" }}>
+      {/* SS Segments Panel - Left Side */}
+      <div style={{
+        position: "absolute",
+        top: "10px",
+        left: "10px",
+        zIndex: 1000,
+        backgroundColor: "white",
+        padding: "10px 15px",
+        borderRadius: "8px",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.3)",
+        fontFamily: "Arial, sans-serif",
+        fontSize: "13px",
+        maxHeight: "calc(100vh - 40px)",
+        overflowY: "auto",
+        minWidth: "180px"
+      }}>
+        <div style={{ fontWeight: "bold", marginBottom: "10px", borderBottom: "1px solid #ddd", paddingBottom: "8px" }}>
+          📍 SS Segments
+        </div>
+        {SS_SEGMENTS.map((segment) => (
+          <div
+            key={segment.id}
+            onClick={() => setActiveSegment(activeSegment === segment.id ? null : segment.id)}
+            style={{
+              padding: "8px 10px",
+              marginBottom: "4px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              backgroundColor: activeSegment === segment.id ? "#00FFFF" : "#f5f5f5",
+              color: activeSegment === segment.id ? "#000" : "#333",
+              fontWeight: activeSegment === segment.id ? "bold" : "normal",
+              transition: "all 0.2s",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              border: activeSegment === segment.id ? "2px solid #00CED1" : "1px solid #ddd"
+            }}
+            onMouseEnter={(e) => {
+              if (activeSegment !== segment.id) {
+                e.target.style.backgroundColor = "#e0e0e0";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (activeSegment !== segment.id) {
+                e.target.style.backgroundColor = "#f5f5f5";
+              }
+            }}
+          >
+            <span>{segment.label}</span>
+            <span style={{ 
+              fontSize: "11px", 
+              color: activeSegment === segment.id ? "#006666" : "#666",
+              fontWeight: "bold"
+            }}>
+              {segmentLengths[segment.id] ? `${segmentLengths[segment.id].toFixed(1)}m` : "..."}
+            </span>
+          </div>
+        ))}
+        {activeSegment && (
+          <div style={{
+            marginTop: "10px",
+            padding: "10px",
+            backgroundColor: "#e0ffff",
+            borderRadius: "6px",
+            border: "1px solid #00CED1",
+            textAlign: "center"
+          }}>
+            <div style={{ fontSize: "12px", color: "#006666", marginBottom: "4px" }}>
+              Selected: <b>{activeSegment}</b>
+            </div>
+            <div style={{ fontSize: "16px", fontWeight: "bold", color: "#008B8B" }}>
+              Total: {segmentLengths[activeSegment] ? `${segmentLengths[activeSegment].toFixed(1)} m` : "..."}
+            </div>
+            <button
+              onClick={() => setActiveSegment(null)}
+              style={{
+                marginTop: "8px",
+                padding: "4px 12px",
+                border: "none",
+                borderRadius: "4px",
+                backgroundColor: "#008B8B",
+                color: "white",
+                cursor: "pointer",
+                fontSize: "11px"
+              }}
+            >
+              Clear Selection
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Progress Counter - Top Center */}
       <div style={{
         position: "absolute",
@@ -1165,6 +1508,19 @@ export default function Map() {
             onEachFeature={onEachTrenchLineFeature}
           />
         )}
+        {geoJsonData.poli && (
+          <GeoJSON
+            data={geoJsonData.poli}
+            style={poliStyle}
+          />
+        )}
+        {highlightedSegmentGeoJson() && (
+          <GeoJSON
+            key={`highlighted-${activeSegment}`}
+            data={highlightedSegmentGeoJson()}
+            style={highlightedSegmentStyle}
+          />
+        )}
         {selectedGeoJson() && (
           <GeoJSON
             key={`selected-${selectedSegments.length}-${completedLength}`}
@@ -1209,6 +1565,19 @@ export default function Map() {
             return (
               <Marker
                 key={index}
+                position={[lat, lng]}
+                icon={createTextIcon(feature.properties.text)}
+              />
+            );
+          }
+          return null;
+        })}
+        {geoJsonData.text2 && showText && geoJsonData.text2.features.map((feature, index) => {
+          if (feature.geometry.type === 'Point' && feature.properties.text) {
+            const [lng, lat] = feature.geometry.coordinates;
+            return (
+              <Marker
+                key={`text2-${index}`}
                 position={[lat, lng]}
                 icon={createTextIcon(feature.properties.text)}
               />
