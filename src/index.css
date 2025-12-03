@@ -3,3 +3,41 @@ body {
   padding: 0;
   overflow: hidden;
 }
+
+/* Text labels should not block mouse events on the map */
+.custom-text-icon {
+  pointer-events: none !important;
+}
+
+.custom-text-icon * {
+  pointer-events: none !important;
+}
+
+/* High quality rendering for SVG lines */
+.leaflet-overlay-pane svg {
+  shape-rendering: geometricPrecision;
+}
+
+.leaflet-overlay-pane path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Breathing/pulse animation for highlighted segments */
+@keyframes breathe {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.leaflet-interactive.breathing-line {
+  animation: breathe 2s ease-in-out infinite;
+}
+
+.leaflet-interactive.breathing-line-inner {
+  animation: breathe 2s ease-in-out infinite;
+  animation-delay: 0.15s;
+}

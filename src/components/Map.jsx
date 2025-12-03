@@ -154,12 +154,25 @@ const lineIntersectsBounds = (coordinates, bounds) => {
 };
 
 // Selection Box Component
-function SelectionBox({ mode, onSelectionComplete, onUnselectionComplete, onMeasurementComplete, onMeasurementUnselect, visibleLayersRef, geoJsonData, setSelectedBounds, selectedSegments, setSelectedSegments, measurementSegments }) {
+function SelectionBox({ onSelectionComplete, onUnselectionComplete, visibleLayersRef, geoJsonData, setSelectedBounds, selectedSegments, setSelectedSegments }) {
   const [isSelecting, setIsSelecting] = useState(false);
   const [isUnselecting, setIsUnselecting] = useState(false); // Right-click unselect mode
   const [startPoint, setStartPoint] = useState(null);
   const [currentPoint, setCurrentPoint] = useState(null);
   const selectionRectRef = useRef(null);
+
+  // Prevent context menu on right click to allow unselect functionality
+  useEffect(() => {
+    const preventContextMenu = (e) => {
+      e.preventDefault();
+      return false;
+    };
+    
+    document.addEventListener('contextmenu', preventContextMenu);
+    return () => {
+      document.removeEventListener('contextmenu', preventContextMenu);
+    };
+  }, []);
 
   // Check if a point on the line is already selected
   const isPointAlreadySelected = (coord, segments) => {
@@ -334,9 +347,7 @@ function SelectionBox({ mode, onSelectionComplete, onUnselectionComplete, onMeas
         const bounds = L.latLngBounds(startPoint, e.latlng);
         let boxColor = '#0066ff'; // Default blue for marking
         if (isUnselecting) {
-          boxColor = '#ff0000'; // Red for unselect (both modes)
-        } else if (mode === 'measurement') {
-          boxColor = '#FFA500'; // Orange for measurement
+          boxColor = '#ff0000'; // Red for unselect
         }
         
         if (selectionRectRef.current) {
@@ -386,96 +397,18 @@ function SelectionBox({ mode, onSelectionComplete, onUnselectionComplete, onMeas
             }
           });
           
-          // Process measurement segments the same way
-          const newMeasurementSegments = [];
-          let measurementsModified = false;
-          
-          measurementSegments.forEach((measurement) => {
-            const remainingMeasurementSegs = [];
-            let modified = false;
-            
-            measurement.segments.forEach(seg => {
-              const clipped = clipLineToBounds(seg.start, seg.end, boundsObj);
-              
-              if (clipped) {
-                modified = true;
-                measurementsModified = true;
-                const remainingParts = subtractFromSegment(seg, clipped[0], clipped[1]);
-                remainingMeasurementSegs.push(...remainingParts);
-              } else {
-                remainingMeasurementSegs.push(seg);
-              }
-            });
-            
-            if (remainingMeasurementSegs.length > 0) {
-              // Calculate new length and center
-              let remainingLength = 0;
-              let sumLat = 0, sumLng = 0, count = 0;
-              remainingMeasurementSegs.forEach(seg => {
-                remainingLength += calculateDistance(seg.start, seg.end);
-                sumLng += (seg.start[0] + seg.end[0]) / 2;
-                sumLat += (seg.start[1] + seg.end[1]) / 2;
-                count++;
-              });
-              const centerLng = count > 0 ? sumLng / count : 0;
-              const centerLat = count > 0 ? sumLat / count : 0;
-              
-              newMeasurementSegments.push({
-                segments: remainingMeasurementSegs,
-                length: remainingLength,
-                center: [centerLng, centerLat]
-              });
-            }
-            // If no remaining segments, the measurement is completely removed
-          });
-          
           // Update marking segments if any length was removed
           if (totalLengthRemoved > 0) {
             onUnselectionComplete(totalLengthRemoved, [], newSelectedSegments);
-          }
-          
-          // Update measurement segments if any were modified
-          if (measurementsModified) {
-            onMeasurementUnselect(newMeasurementSegments);
-          }
-        } else if (mode === 'measurement') {
-          // MEASUREMENT MODE - Just measure and display, don't add to completed
-          let totalLengthInside = 0;
-          const newMeasurementSegments = [];
-          
-          if (geoJsonData.trenchLine) {
-            geoJsonData.trenchLine.features.forEach((feature, featureIndex) => {
-              if (feature.properties && feature.properties.layer === "Base Zanjas MT_CIVIL_H$0$C-STRM-CNTR") {
-                const coords = feature.geometry.coordinates;
-                
-                for (let i = 0; i < coords.length - 1; i++) {
-                  const coord1 = coords[i];
-                  const coord2 = coords[i + 1];
-                  
-                  // Clip line to bounds
-                  const clipped = clipLineToBounds(coord1, coord2, boundsObj);
-                  
-                  if (clipped) {
-                    const clippedLength = calculateDistance(clipped[0], clipped[1]);
-                    totalLengthInside += clippedLength;
-                    newMeasurementSegments.push({ start: clipped[0], end: clipped[1] });
-                  }
-                }
-              }
-            });
-          }
-          
-          if (totalLengthInside > 0) {
-            onMeasurementComplete(totalLengthInside, newMeasurementSegments, boundsObj);
           }
         } else {
           // MARKING SELECT MODE - Add segments that are inside the box
           let totalLengthInside = 0;
           const newSelectedSegments = [];
           
-          if (geoJsonData.trenchLine) {
-            geoJsonData.trenchLine.features.forEach((feature, featureIndex) => {
-              if (feature.properties && feature.properties.layer === "Base Zanjas MT_CIVIL_H$0$C-STRM-CNTR") {
+          if (geoJsonData.trench) {
+            geoJsonData.trench.features.forEach((feature, featureIndex) => {
+              if (feature.geometry && feature.geometry.type === "LineString") {
                 const coords = feature.geometry.coordinates;
                 
                 for (let i = 0; i < coords.length - 1; i++) {
@@ -534,39 +467,39 @@ function SelectionBox({ mode, onSelectionComplete, onUnselectionComplete, onMeas
   return null;
 }
 
-// SS Station coordinates (from text2.geojson)
+// SS Station coordinates
 const SS_STATIONS = {
-  SS1: [-1.657385735167627, 52.685184527503822],
-  SS2: [-1.658778597831879, 52.683702838735101],
-  SS3: [-1.660892033311022, 52.686941496854956],
-  SS4: [-1.661595465931238, 52.68852372875844],
-  SS5: [-1.669201311299513, 52.685463263206088],
-  SS6: [-1.667897742722671, 52.688613796702931],
+  SS01: [-1.657385735167627, 52.685184527503822],
+  SS02: [-1.658778597831879, 52.683702838735101],
+  SS03: [-1.660892033311022, 52.686941496854956],
+  SS04: [-1.661595465931238, 52.68852372875844],
+  SS05: [-1.669201311299513, 52.685463263206088],
+  SS06: [-1.667897742722671, 52.688613796702931],
   CSS: [-1.654334831002414, 52.685259188363439]
 };
 
 // Segment definitions between SS stations (only the requested 6 segments)
 const SS_SEGMENTS = [
-  { id: 'SS6-SS3', from: 'SS6', to: 'SS3', label: 'SS6-SS3' },
-  { id: 'SS5-SS2', from: 'SS5', to: 'SS2', label: 'SS5-SS2' },
-  { id: 'SS4-SS1', from: 'SS4', to: 'SS1', label: 'SS4-SS1' },
-  { id: 'SS1-CSS', from: 'SS1', to: 'CSS', label: 'SS1-CSS' },
-  { id: 'SS2-CSS', from: 'SS2', to: 'CSS', label: 'SS2-CSS' },
-  { id: 'SS3-CSS', from: 'SS3', to: 'CSS', label: 'SS3-CSS' }
+  { id: 'SS06-SS03', from: 'SS06', to: 'SS03', label: 'SS06-SS03' },
+  { id: 'SS05-SS02', from: 'SS05', to: 'SS02', label: 'SS05-SS02' },
+  { id: 'SS04-SS01', from: 'SS04', to: 'SS01', label: 'SS04-SS01' },
+  { id: 'SS01-CSS', from: 'SS01', to: 'CSS', label: 'SS01-CSS' },
+  { id: 'SS02-CSS', from: 'SS02', to: 'CSS', label: 'SS02-CSS' },
+  { id: 'SS03-CSS', from: 'SS03', to: 'CSS', label: 'SS03-CSS' }
 ];
 
-// Build graph from TRENCH-LINE segments for path finding
-const buildTrenchLineGraph = (trenchLineData) => {
-  if (!trenchLineData) return { nodes: {}, edges: [], nodeCount: 0 };
+// Build graph from trench.geojson segments for path finding
+const buildTrenchGraph = (trenchData) => {
+  if (!trenchData) return { nodes: {}, edges: [], nodeCount: 0 };
   
   const nodes = {}; // key: "lng,lat", value: { index, coord }
   let nodeIndex = 0;
   const edges = []; // { from: nodeIdx, to: nodeIdx, length: meters, coords: [start, end] }
-  const tolerance = 0.000005; // ~0.5m tolerance for coordinate matching
+  const tolerance = 0.00002; // ~2m tolerance for coordinate matching
   
   // Round coordinates to find nearby points
   const roundCoord = (val) => Math.round(val / tolerance) * tolerance;
-  const getNodeKey = (coord) => `${roundCoord(coord[0]).toFixed(7)},${roundCoord(coord[1]).toFixed(7)}`;
+  const getNodeKey = (coord) => `${roundCoord(coord[0]).toFixed(6)},${roundCoord(coord[1]).toFixed(6)}`;
   
   const getOrCreateNode = (coord) => {
     const key = getNodeKey(coord);
@@ -576,20 +509,23 @@ const buildTrenchLineGraph = (trenchLineData) => {
     return nodes[key].index;
   };
   
-  trenchLineData.features.forEach((feature) => {
-    if (feature.properties && feature.properties.layer === "Base Zanjas MT_CIVIL_H$0$C-STRM-CNTR") {
+  trenchData.features.forEach((feature) => {
+    if (feature.geometry && feature.geometry.type === "LineString") {
       const coords = feature.geometry.coordinates;
       for (let i = 0; i < coords.length - 1; i++) {
         const fromNode = getOrCreateNode(coords[i]);
         const toNode = getOrCreateNode(coords[i + 1]);
         const length = calculateDistance(coords[i], coords[i + 1]);
         
-        edges.push({
-          from: fromNode,
-          to: toNode,
-          length: length,
-          coords: [coords[i], coords[i + 1]]
-        });
+        // Add edge only if nodes are different
+        if (fromNode !== toNode) {
+          edges.push({
+            from: fromNode,
+            to: toNode,
+            length: length,
+            coords: [coords[i], coords[i + 1]]
+          });
+        }
       }
     }
   });
@@ -695,18 +631,16 @@ const calculatePathLength = (fromStationCoord, toStationCoord, graph) => {
 };
 
 export default function Map() {
-  const [geoJsonData, setGeoJsonData] = useState({ trench: null, text: null, trenchLine: null, poli: null, text2: null });
+  const [geoJsonData, setGeoJsonData] = useState({ trench: null, text: null, poli: null });
   const [completedLength, setCompletedLength] = useState(0);
   const [totalLength, setTotalLength] = useState(0);
   const [selectedBounds, setSelectedBounds] = useState([]); // Array of bounds that have been selected
   const [selectedSegments, setSelectedSegments] = useState([]); // Array of {start: [lng, lat], end: [lng, lat]} for green overlay
-  const [measurementSegments, setMeasurementSegments] = useState([]); // Array of {segments: [...], length: number} for yellow measurement overlay
   const [history, setHistory] = useState([]); // For undo - stores previous states
   const [redoStack, setRedoStack] = useState([]); // For redo - stores undone states
-  const [mode, setMode] = useState('marking'); // 'marking' or 'measurement'
   const [lastMarkedLength, setLastMarkedLength] = useState(0); // Track last marked length for auto-fill
   const [showText, setShowText] = useState(true); // Toggle for text layer visibility
-  const [activeSegment, setActiveSegment] = useState(null); // Currently highlighted SS segment
+  const [activeSegments, setActiveSegments] = useState([]); // Currently highlighted SS segments (multi-select)
   const [segmentLengths, setSegmentLengths] = useState({}); // Calculated lengths for each segment
   const visibleLayersRef = useRef({});
   const mapRef = useRef(null);
@@ -720,17 +654,18 @@ export default function Map() {
   const { exportToExcel, isExporting } = useChartExport();
 
   useEffect(() => {
-    // Load trench.geojson
+    // Load trench.geojson - for path finding and segment calculation
     fetch("/trench.geojson")
       .then((res) => res.json())
       .then((data) => {
         setGeoJsonData(prev => ({ ...prev, trench: data }));
+        // Total length will be calculated from 6 segments in the next useEffect
       })
       .catch((err) => {
         console.warn('Failed to load trench.geojson:', err);
       });
 
-    // Load text.geojson
+    // Load text.geojson - for text labels
     fetch("/text.geojson")
       .then((res) => res.json())
       .then((data) => {
@@ -740,27 +675,7 @@ export default function Map() {
         console.warn('Failed to load text.geojson:', err);
       });
 
-    // Load TRENCH-LINE.geojson
-    fetch("/TRENCH-LINE.geojson")
-      .then((res) => res.json())
-      .then((data) => {
-        setGeoJsonData(prev => ({ ...prev, trenchLine: data }));
-        
-        // Calculate total length of all segments
-        let total = 0;
-        data.features.forEach((feature) => {
-          if (feature.properties && feature.properties.layer === "Base Zanjas MT_CIVIL_H$0$C-STRM-CNTR") {
-            const length = calculateLineLength(feature.geometry.coordinates);
-            total += length;
-          }
-        });
-        setTotalLength(total);
-      })
-      .catch((err) => {
-        console.warn('Failed to load TRENCH-LINE.geojson:', err);
-      });
-
-    // Load poli.geojson
+    // Load poli.geojson - for background
     fetch("/poli.geojson")
       .then((res) => res.json())
       .then((data) => {
@@ -769,46 +684,40 @@ export default function Map() {
       .catch((err) => {
         console.warn('Failed to load poli.geojson:', err);
       });
-
-    // Load text2.geojson
-    fetch("/text2.geojson")
-      .then((res) => res.json())
-      .then((data) => {
-        setGeoJsonData(prev => ({ ...prev, text2: data }));
-      })
-      .catch((err) => {
-        console.warn('Failed to load text2.geojson:', err);
-      });
   }, []);
 
-  // Calculate segment lengths when trenchLine data is loaded
+  // Calculate segment lengths when trench data is loaded
+  // Total = sum of 6 segments (not all trench lines)
   useEffect(() => {
-    if (!geoJsonData.trenchLine) return;
+    if (!geoJsonData.trench) return;
 
-    // Build graph from TRENCH-LINE data
-    const graph = buildTrenchLineGraph(geoJsonData.trenchLine);
-    console.log('Graph built:', { nodeCount: graph.nodeCount, edgeCount: graph.edges.length });
+    // Build graph from trench.geojson data
+    const graph = buildTrenchGraph(geoJsonData.trench);
     
     const lengths = {};
+    let segmentsTotal = 0;
     SS_SEGMENTS.forEach(seg => {
       const fromCoord = SS_STATIONS[seg.from];
       const toCoord = SS_STATIONS[seg.to];
       const result = calculatePathLength(fromCoord, toCoord, graph);
-      console.log(`${seg.id}: length=${result.length.toFixed(2)}m, segments=${result.segments.length}`);
       lengths[seg.id] = result.length;
+      segmentsTotal += result.length;
     });
+    
     setSegmentLengths(lengths);
-  }, [geoJsonData.trenchLine]);
+    // Set total as sum of 6 segments
+    setTotalLength(segmentsTotal);
+  }, [geoJsonData.trench]);
 
   // Get line segments between two SS stations (following the actual path)
   const getSegmentsBetweenStations = useCallback((fromStation, toStation) => {
-    if (!geoJsonData.trenchLine) return [];
+    if (!geoJsonData.trench) return [];
     
     const fromCoord = SS_STATIONS[fromStation];
     const toCoord = SS_STATIONS[toStation];
     
     // Build graph and find path
-    const graph = buildTrenchLineGraph(geoJsonData.trenchLine);
+    const graph = buildTrenchGraph(geoJsonData.trench);
     const result = calculatePathLength(fromCoord, toCoord, graph);
     
     // Convert path segments to the format expected by the UI
@@ -816,34 +725,145 @@ export default function Map() {
       start: seg.coords[0],
       end: seg.coords[1]
     }));
-  }, [geoJsonData.trenchLine]);
+  }, [geoJsonData.trench]);
+
+  // Check if a segment overlaps with any selected (green) segment
+  // Uses midpoint check and distance-based overlap detection
+  const isSegmentCompleted = useCallback((segStart, segEnd) => {
+    if (selectedSegments.length === 0) return false;
+    
+    // Calculate midpoint of the segment to check
+    const midX = (segStart[0] + segEnd[0]) / 2;
+    const midY = (segStart[1] + segEnd[1]) / 2;
+    
+    // Check if midpoint lies on or very close to any selected segment
+    return selectedSegments.some(selected => {
+      // Calculate distance from midpoint to the selected segment line
+      const x1 = selected.start[0], y1 = selected.start[1];
+      const x2 = selected.end[0], y2 = selected.end[1];
+      
+      // Vector from start to end of selected segment
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const segLengthSq = dx * dx + dy * dy;
+      
+      if (segLengthSq === 0) return false; // Degenerate segment
+      
+      // Project midpoint onto the line, clamped to segment
+      const t = Math.max(0, Math.min(1, ((midX - x1) * dx + (midY - y1) * dy) / segLengthSq));
+      
+      // Closest point on selected segment to midpoint
+      const closestX = x1 + t * dx;
+      const closestY = y1 + t * dy;
+      
+      // Distance from midpoint to closest point on segment
+      const distSq = (midX - closestX) * (midX - closestX) + (midY - closestY) * (midY - closestY);
+      
+      // Tolerance: ~3 meters in degrees (approximately 0.00003 degrees)
+      const toleranceSq = 0.00003 * 0.00003;
+      
+      return distSq < toleranceSq;
+    });
+  }, [selectedSegments]);
 
   // Generate GeoJSON for highlighted segment
+  // Generate GeoJSON for all highlighted segments (multi-select)
   const highlightedSegmentGeoJson = useCallback(() => {
-    if (!activeSegment) return null;
+    if (activeSegments.length === 0) return null;
     
-    const segment = SS_SEGMENTS.find(s => s.id === activeSegment);
-    if (!segment) return null;
+    const allFeatures = [];
+    activeSegments.forEach(segId => {
+      const segment = SS_SEGMENTS.find(s => s.id === segId);
+      if (!segment) return;
+      
+      const segments = getSegmentsBetweenStations(segment.from, segment.to);
+      segments.forEach((seg, idx) => {
+        allFeatures.push({
+          type: "Feature",
+          properties: { 
+            index: idx,
+            segmentId: segId,
+            isCompleted: isSegmentCompleted(seg.start, seg.end)
+          },
+          geometry: {
+            type: "LineString",
+            coordinates: [seg.start, seg.end]
+          }
+        });
+      });
+    });
     
-    const segments = getSegmentsBetweenStations(segment.from, segment.to);
-    if (segments.length === 0) return null;
+    if (allFeatures.length === 0) return null;
     
     return {
       type: "FeatureCollection",
-      features: segments.map((seg, idx) => ({
-        type: "Feature",
-        properties: { index: idx },
-        geometry: {
-          type: "LineString",
-          coordinates: [seg.start, seg.end]
-        }
-      }))
+      features: allFeatures
     };
-  }, [activeSegment, getSegmentsBetweenStations]);
+  }, [activeSegments, getSegmentsBetweenStations, isSegmentCompleted]);
 
-  // Style for highlighted segment
-  const highlightedSegmentStyle = useCallback(() => {
-    return { color: '#00FFFF', weight: 8, opacity: 1 }; // Cyan color for highlight
+  // Style for highlighted segment - professional cyan/teal
+  const highlightedSegmentStyle = useCallback((feature) => {
+    const isCompleted = feature.properties?.isCompleted;
+    if (isCompleted) {
+      return { 
+        color: '#00CED1', // Dark cyan - professional
+        weight: 9, 
+        opacity: 0.9,
+        lineCap: 'round',
+        lineJoin: 'round'
+      };
+    }
+    return { 
+      color: '#00CED1', // Dark cyan
+      weight: 7, 
+      opacity: 0.9,
+      lineCap: 'round',
+      lineJoin: 'round'
+    };
+  }, []);
+
+  // Add breathing class to highlighted segments
+  const onEachHighlightedFeature = useCallback((feature, layer) => {
+    if (layer._path) {
+      layer._path.classList.add('breathing-line');
+    }
+    // For when the path is created later
+    layer.on('add', () => {
+      if (layer._path) {
+        layer._path.classList.add('breathing-line');
+      }
+    });
+  }, []);
+
+  // Add breathing class to inner (green) segments
+  const onEachHighlightedInnerFeature = useCallback((feature, layer) => {
+    if (layer._path) {
+      layer._path.classList.add('breathing-line-inner');
+    }
+    layer.on('add', () => {
+      if (layer._path) {
+        layer._path.classList.add('breathing-line-inner');
+      }
+    });
+  }, []);
+
+  // Inner line style for completed segments (green center)
+  const highlightedCompletedInnerStyle = useCallback((feature) => {
+    const isCompleted = feature.properties?.isCompleted;
+    if (isCompleted) {
+      return { 
+        color: '#27AE60', // Professional green inner
+        weight: 4, 
+        opacity: 1,
+        lineCap: 'round',
+        lineJoin: 'round'
+      };
+    }
+    return { 
+      color: 'transparent',
+      weight: 0,
+      opacity: 0 
+    };
   }, []);
 
   // Calculate remaining length
@@ -881,41 +901,6 @@ export default function Map() {
       return Math.max(0, newCompleted);
     });
   }, [completedLength, selectedBounds, selectedSegments]);
-
-  // Handle measurement complete - AutoCAD style dimension
-  // Each measurement is added to the list (accumulates)
-  const handleMeasurementComplete = useCallback((length, segments, bounds) => {
-    if (segments.length === 0) return;
-    
-    // Find the overall start and end points of the measurement
-    // (first point of first segment, last point of last segment)
-    const startPoint = segments[0].start;
-    const endPoint = segments[segments.length - 1].end;
-    
-    // Calculate center point for label
-    const centerLng = (startPoint[0] + endPoint[0]) / 2;
-    const centerLat = (startPoint[1] + endPoint[1]) / 2;
-    
-    // Calculate angle of the dimension line (from start to end)
-    const dx = endPoint[0] - startPoint[0];
-    const dy = endPoint[1] - startPoint[1];
-    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-    
-    // Add new measurement to the list (keep all previous measurements)
-    setMeasurementSegments(prev => [...prev, {
-      segments,
-      length,
-      center: [centerLng, centerLat],
-      startPoint,
-      endPoint,
-      angle
-    }]);
-  }, []);
-
-  // Handle measurement unselect - replace with new measurement segments list
-  const handleMeasurementUnselect = useCallback((newMeasurements) => {
-    setMeasurementSegments(newMeasurements);
-  }, []);
 
   // Undo function
   const handleUndo = useCallback(() => {
@@ -990,94 +975,13 @@ export default function Map() {
     };
   }, [selectedSegments]);
 
-  // Create GeoJSON for measurement (yellow) segments
-  const measurementGeoJson = useCallback(() => {
-    if (measurementSegments.length === 0) return null;
-    
-    const measurementFeatures = [];
-    measurementSegments.forEach(measurement => {
-      measurement.segments.forEach(seg => {
-        measurementFeatures.push({
-          type: "Feature",
-          properties: {},
-          geometry: {
-            type: "LineString",
-            coordinates: [seg.start, seg.end]
-          }
-        });
-      });
-    });
-    
-    return {
-      type: "FeatureCollection",
-      features: measurementFeatures
-    };
-  }, [measurementSegments]);
-
-  // Clear all measurements
-  const clearMeasurements = useCallback(() => {
-    setMeasurementSegments([]);
-  }, []);
-
   const greenLineStyle = () => ({
-    color: '#00ff00',
-    weight: 6,
-    opacity: 1
+    color: '#2ECC71', // Professional emerald green
+    weight: 5,
+    opacity: 1,
+    lineCap: 'round',
+    lineJoin: 'round'
   });
-
-  const yellowLineStyle = () => ({
-    color: '#FFA500',
-    weight: 6,
-    opacity: 1
-  });
-
-  // Create AutoCAD-style dimension label icon (rotated to match line angle)
-  const createDimensionLabelIcon = (length, angle) => {
-    // Normalize angle to keep text readable (not upside down)
-    let displayAngle = angle;
-    if (displayAngle > 90) displayAngle -= 180;
-    if (displayAngle < -90) displayAngle += 180;
-    
-    return new DivIcon({
-      html: `<div style="
-        font-size: 12px;
-        font-weight: bold;
-        color: #000;
-        background: rgba(255, 255, 255, 0.95);
-        padding: 2px 8px;
-        border: 1px solid #FFA500;
-        white-space: nowrap;
-        transform: rotate(${displayAngle}deg);
-        transform-origin: center center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-      ">${length.toFixed(2)} m</div>`,
-      className: 'dimension-label-icon',
-      iconSize: [80, 20],
-      iconAnchor: [40, 10]
-    });
-  };
-
-  // Create arrow marker icon for dimension line endpoints
-  const createArrowIcon = (angle, isStart) => {
-    // Arrow points in the direction of the line
-    // For start point, arrow points toward end; for end point, arrow points toward start
-    const arrowAngle = isStart ? angle : angle + 180;
-    
-    return new DivIcon({
-      html: `<div style="
-        width: 0;
-        height: 0;
-        border-left: 8px solid transparent;
-        border-right: 8px solid transparent;
-        border-bottom: 12px solid #FFA500;
-        transform: rotate(${arrowAngle - 90}deg);
-        transform-origin: center center;
-      "></div>`,
-      className: 'dimension-arrow-icon',
-      iconSize: [16, 12],
-      iconAnchor: [8, 6]
-    });
-  };
 
   const onEachFeature = (feature, layer) => {
     if (feature.properties && feature.properties.text) {
@@ -1107,19 +1011,31 @@ export default function Map() {
   };
 
   const trenchLineStyle = useCallback((feature) => {
-    return { color: '#FFD700', weight: 5, opacity: 1 }; // Bright Yellow
+    return { 
+      color: '#D4A017', // Professional golden yellow
+      weight: 4, 
+      opacity: 0.9,
+      lineCap: 'round',
+      lineJoin: 'round'
+    };
   }, []);
 
   const poliStyle = useCallback((feature) => {
-    return { color: '#FF00FF', weight: 2, opacity: 0.8 }; // Magenta/Purple
+    return { 
+      color: '#8B008B', // Dark magenta - more professional
+      weight: 1.5, 
+      opacity: 0.6,
+      lineCap: 'round',
+      lineJoin: 'round'
+    };
   }, []);
 
   const createTextIcon = (text) => {
     return new DivIcon({
-      html: `<div style="font-size: 12px; font-weight: bold; color: black; background: rgba(255,255,255,0.8); padding: 2px 4px; border-radius: 3px; border: 1px solid #333; white-space: nowrap;">${text}</div>`,
+      html: `<div style="font-size: 11px; font-weight: 500; color: #333; background: rgba(255,255,255,0.75); padding: 1px 4px; border-radius: 2px; border: 1px solid #999; white-space: nowrap; pointer-events: none;">${text}</div>`,
       className: 'custom-text-icon',
-      iconSize: [text.length * 8, 20],
-      iconAnchor: [text.length * 4, 10]
+      iconSize: [text.length * 7, 18],
+      iconAnchor: [text.length * 3.5, 9]
     });
   };
 
@@ -1144,62 +1060,74 @@ export default function Map() {
         <div style={{ fontWeight: "bold", marginBottom: "10px", borderBottom: "1px solid #ddd", paddingBottom: "8px" }}>
           📍 SS Segments
         </div>
-        {SS_SEGMENTS.map((segment) => (
-          <div
-            key={segment.id}
-            onClick={() => setActiveSegment(activeSegment === segment.id ? null : segment.id)}
-            style={{
-              padding: "8px 10px",
-              marginBottom: "4px",
-              borderRadius: "6px",
-              cursor: "pointer",
-              backgroundColor: activeSegment === segment.id ? "#00FFFF" : "#f5f5f5",
-              color: activeSegment === segment.id ? "#000" : "#333",
-              fontWeight: activeSegment === segment.id ? "bold" : "normal",
-              transition: "all 0.2s",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              border: activeSegment === segment.id ? "2px solid #00CED1" : "1px solid #ddd"
-            }}
-            onMouseEnter={(e) => {
-              if (activeSegment !== segment.id) {
-                e.target.style.backgroundColor = "#e0e0e0";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (activeSegment !== segment.id) {
-                e.target.style.backgroundColor = "#f5f5f5";
-              }
-            }}
-          >
-            <span>{segment.label}</span>
-            <span style={{ 
-              fontSize: "11px", 
-              color: activeSegment === segment.id ? "#006666" : "#666",
-              fontWeight: "bold"
-            }}>
-              {segmentLengths[segment.id] ? `${segmentLengths[segment.id].toFixed(1)}m` : "..."}
-            </span>
-          </div>
-        ))}
-        {activeSegment && (
+        {SS_SEGMENTS.map((segment) => {
+          const isSelected = activeSegments.includes(segment.id);
+          return (
+            <div
+              key={segment.id}
+              onClick={() => {
+                // Toggle segment selection (multi-select)
+                if (isSelected) {
+                  setActiveSegments(prev => prev.filter(id => id !== segment.id));
+                } else {
+                  setActiveSegments(prev => [...prev, segment.id]);
+                }
+              }}
+              style={{
+                padding: "8px 10px",
+                marginBottom: "4px",
+                borderRadius: "6px",
+                cursor: "pointer",
+                backgroundColor: isSelected ? "#E0FFFF" : "#f8f9fa",
+                color: isSelected ? "#006666" : "#333",
+                fontWeight: isSelected ? "600" : "normal",
+                transition: "all 0.2s",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                border: isSelected ? "2px solid #00CED1" : "1px solid #e0e0e0"
+              }}
+              onMouseEnter={(e) => {
+                if (!isSelected) {
+                  e.currentTarget.style.backgroundColor = "#f0f0f0";
+                  e.currentTarget.style.borderColor = "#ccc";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isSelected) {
+                  e.currentTarget.style.backgroundColor = "#f8f9fa";
+                  e.currentTarget.style.borderColor = "#e0e0e0";
+                }
+              }}
+            >
+              <span>{segment.label}</span>
+              <span style={{ 
+                fontSize: "11px", 
+                color: isSelected ? "#008B8B" : "#666",
+                fontWeight: "bold"
+              }}>
+                {segmentLengths[segment.id] ? `${segmentLengths[segment.id].toFixed(1)}m` : "..."}
+              </span>
+            </div>
+          );
+        })}
+        {activeSegments.length > 0 && (
           <div style={{
             marginTop: "10px",
             padding: "10px",
-            backgroundColor: "#e0ffff",
+            backgroundColor: "#E8F8F8",
             borderRadius: "6px",
             border: "1px solid #00CED1",
             textAlign: "center"
           }}>
             <div style={{ fontSize: "12px", color: "#006666", marginBottom: "4px" }}>
-              Selected: <b>{activeSegment}</b>
+              Selected: <b>{activeSegments.length} segment{activeSegments.length > 1 ? 's' : ''}</b>
             </div>
-            <div style={{ fontSize: "16px", fontWeight: "bold", color: "#008B8B" }}>
-              Total: {segmentLengths[activeSegment] ? `${segmentLengths[activeSegment].toFixed(1)} m` : "..."}
+            <div style={{ fontSize: "15px", fontWeight: "bold", color: "#008B8B" }}>
+              Total: {activeSegments.reduce((sum, id) => sum + (segmentLengths[id] || 0), 0).toFixed(1)} m
             </div>
             <button
-              onClick={() => setActiveSegment(null)}
+              onClick={() => setActiveSegments([])}
               style={{
                 marginTop: "8px",
                 padding: "4px 12px",
@@ -1211,7 +1139,7 @@ export default function Map() {
                 fontSize: "11px"
               }}
             >
-              Clear Selection
+              Clear All
             </button>
           </div>
         )}
@@ -1225,52 +1153,21 @@ export default function Map() {
         transform: "translateX(-50%)",
         zIndex: 1000,
         backgroundColor: "white",
-        padding: "15px 25px",
-        borderRadius: "8px",
-        boxShadow: "0 2px 10px rgba(0,0,0,0.3)",
+        padding: "8px 15px",
+        borderRadius: "6px",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
         fontFamily: "Arial, sans-serif",
-        fontSize: "14px",
+        fontSize: "12px",
         display: "flex",
-        gap: "20px",
+        gap: "12px",
         alignItems: "center"
       }}>
-        {/* Mode Buttons */}
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button
-            onClick={() => setMode('marking')}
-            title="Marking Mode"
-            style={{
-              padding: "8px 16px",
-              border: "none",
-              borderRadius: "6px",
-              backgroundColor: mode === 'marking' ? "#00aa00" : "#f0f0f0",
-              color: mode === 'marking' ? "white" : "#333",
-              cursor: "pointer",
-              fontWeight: "bold",
-              transition: "background-color 0.2s"
-            }}
-          >
-            ✓ Marking
-          </button>
-          <button
-            onClick={() => setMode('measurement')}
-            title="Measurement Mode"
-            style={{
-              padding: "8px 16px",
-              border: "none",
-              borderRadius: "6px",
-              backgroundColor: mode === 'measurement' ? "#FFA500" : "#f0f0f0",
-              color: mode === 'measurement' ? "white" : "#333",
-              cursor: "pointer",
-              fontWeight: "bold",
-              transition: "background-color 0.2s"
-            }}
-          >
-            📏 Measurement
-          </button>
+        {/* Title */}
+        <div style={{ fontWeight: "600", fontSize: "13px", color: "#333" }}>
+          MV Cable Pulling Progress Tracking
         </div>
         
-        <div style={{ width: "1px", height: "40px", backgroundColor: "#ddd" }}></div>
+        <div style={{ width: "1px", height: "24px", backgroundColor: "#ddd" }}></div>
         
         {/* Undo Button */}
         <button
@@ -1278,10 +1175,10 @@ export default function Map() {
           disabled={history.length === 0}
           title="Undo (Ctrl+Z)"
           style={{
-            width: "36px",
-            height: "36px",
+            width: "28px",
+            height: "28px",
             border: "none",
-            borderRadius: "6px",
+            borderRadius: "4px",
             backgroundColor: history.length === 0 ? "#e0e0e0" : "#f0f0f0",
             cursor: history.length === 0 ? "not-allowed" : "pointer",
             display: "flex",
@@ -1292,7 +1189,7 @@ export default function Map() {
           onMouseEnter={(e) => { if (history.length > 0) e.target.style.backgroundColor = "#ddd"; }}
           onMouseLeave={(e) => { if (history.length > 0) e.target.style.backgroundColor = "#f0f0f0"; }}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={history.length === 0 ? "#999" : "#333"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={history.length === 0 ? "#999" : "#333"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 7v6h6"/>
             <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
           </svg>
@@ -1304,10 +1201,10 @@ export default function Map() {
           disabled={redoStack.length === 0}
           title="Redo (Ctrl+Y)"
           style={{
-            width: "36px",
-            height: "36px",
+            width: "28px",
+            height: "28px",
             border: "none",
-            borderRadius: "6px",
+            borderRadius: "4px",
             backgroundColor: redoStack.length === 0 ? "#e0e0e0" : "#f0f0f0",
             cursor: redoStack.length === 0 ? "not-allowed" : "pointer",
             display: "flex",
@@ -1318,26 +1215,27 @@ export default function Map() {
           onMouseEnter={(e) => { if (redoStack.length > 0) e.target.style.backgroundColor = "#ddd"; }}
           onMouseLeave={(e) => { if (redoStack.length > 0) e.target.style.backgroundColor = "#f0f0f0"; }}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={redoStack.length === 0 ? "#999" : "#333"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={redoStack.length === 0 ? "#999" : "#333"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 7v6h-6"/>
             <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>
           </svg>
         </button>
         
-        <div style={{ width: "1px", height: "40px", backgroundColor: "#ddd" }}></div>
+        <div style={{ width: "1px", height: "24px", backgroundColor: "#ddd" }}></div>
         
         {/* Submit Button */}
         <button
           onClick={() => setSubmitModalOpen(true)}
           title="Submit Daily Work"
           style={{
-            padding: "8px 16px",
+            padding: "5px 10px",
             border: "none",
-            borderRadius: "6px",
+            borderRadius: "4px",
             backgroundColor: "#0066cc",
             color: "white",
             cursor: "pointer",
-            fontWeight: "bold",
+            fontSize: "11px",
+            fontWeight: "500",
             transition: "background-color 0.2s"
           }}
           onMouseEnter={(e) => e.target.style.backgroundColor = "#0055aa"}
@@ -1351,13 +1249,14 @@ export default function Map() {
           onClick={() => setHistoryModalOpen(true)}
           title="View History"
           style={{
-            padding: "8px 16px",
+            padding: "5px 10px",
             border: "none",
-            borderRadius: "6px",
+            borderRadius: "4px",
             backgroundColor: "#666",
             color: "white",
             cursor: "pointer",
-            fontWeight: "bold",
+            fontSize: "11px",
+            fontWeight: "500",
             transition: "background-color 0.2s"
           }}
           onMouseEnter={(e) => e.target.style.backgroundColor = "#555"}
@@ -1372,40 +1271,41 @@ export default function Map() {
           disabled={isExporting || dailyLog.length === 0}
           title="Export to Excel"
           style={{
-            padding: "8px 16px",
+            padding: "5px 10px",
             border: "none",
-            borderRadius: "6px",
+            borderRadius: "4px",
             backgroundColor: (isExporting || dailyLog.length === 0) ? "#ccc" : "#228B22",
             color: "white",
             cursor: (isExporting || dailyLog.length === 0) ? "not-allowed" : "pointer",
-            fontWeight: "bold",
+            fontSize: "11px",
+            fontWeight: "500",
             transition: "background-color 0.2s"
           }}
           onMouseEnter={(e) => { if (!isExporting && dailyLog.length > 0) e.target.style.backgroundColor = "#1a6b1a"; }}
           onMouseLeave={(e) => { if (!isExporting && dailyLog.length > 0) e.target.style.backgroundColor = "#228B22"; }}
         >
-          {isExporting ? "⏳ Exporting..." : "📊 Export"}
+          {isExporting ? "⏳..." : "📊 Export"}
         </button>
         
-        <div style={{ width: "1px", height: "40px", backgroundColor: "#ddd" }}></div>
+        <div style={{ width: "1px", height: "24px", backgroundColor: "#ddd" }}></div>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "12px", color: "#666", marginBottom: "4px" }}>Total</div>
-          <div style={{ fontWeight: "bold", fontSize: "16px" }}>{totalLength.toFixed(1)} m</div>
+          <div style={{ fontSize: "10px", color: "#666" }}>Total</div>
+          <div style={{ fontWeight: "600", fontSize: "13px" }}>{totalLength.toFixed(1)} m</div>
         </div>
-        <div style={{ width: "1px", height: "40px", backgroundColor: "#ddd" }}></div>
+        <div style={{ width: "1px", height: "24px", backgroundColor: "#ddd" }}></div>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "12px", color: "#666", marginBottom: "4px" }}>Completed</div>
-          <div style={{ fontWeight: "bold", fontSize: "16px", color: "#00aa00" }}>{completedLength.toFixed(1)} m</div>
+          <div style={{ fontSize: "10px", color: "#666" }}>Completed</div>
+          <div style={{ fontWeight: "600", fontSize: "13px", color: "#00aa00" }}>{completedLength.toFixed(1)} m</div>
         </div>
-        <div style={{ width: "1px", height: "40px", backgroundColor: "#ddd" }}></div>
+        <div style={{ width: "1px", height: "24px", backgroundColor: "#ddd" }}></div>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "12px", color: "#666", marginBottom: "4px" }}>Progress</div>
-          <div style={{ fontWeight: "bold", fontSize: "16px", color: "#0066cc" }}>{completedPercentage}%</div>
+          <div style={{ fontSize: "10px", color: "#666" }}>Progress</div>
+          <div style={{ fontWeight: "600", fontSize: "13px", color: "#0066cc" }}>{completedPercentage}%</div>
         </div>
-        <div style={{ width: "1px", height: "40px", backgroundColor: "#ddd" }}></div>
+        <div style={{ width: "1px", height: "24px", backgroundColor: "#ddd" }}></div>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "12px", color: "#666", marginBottom: "4px" }}>Remaining</div>
-          <div style={{ fontWeight: "bold", fontSize: "16px", color: "#cc6600" }}>{remainingLength.toFixed(1)} m</div>
+          <div style={{ fontSize: "10px", color: "#666" }}>Remaining</div>
+          <div style={{ fontWeight: "600", fontSize: "13px", color: "#cc6600" }}>{remainingLength.toFixed(1)} m</div>
         </div>
       </div>
 
@@ -1416,45 +1316,45 @@ export default function Map() {
         right: "10px",
         zIndex: 1000,
         backgroundColor: "white",
-        padding: "10px 15px",
-        borderRadius: "5px",
-        boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+        padding: "12px 16px",
+        borderRadius: "8px",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
         fontFamily: "Arial, sans-serif",
-        fontSize: "14px"
+        fontSize: "13px"
       }}>
-        <div style={{ fontWeight: "bold", marginBottom: "8px" }}>Legend</div>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+        <div style={{ fontWeight: "600", marginBottom: "10px", color: "#333" }}>Legend</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
           <div style={{
-            width: "30px",
-            height: "5px",
-            backgroundColor: "#FFD700",
+            width: "32px",
+            height: "4px",
+            backgroundColor: "#D4A017",
             borderRadius: "2px"
           }}></div>
-          <span>Not Completed</span>
+          <span style={{ color: "#555" }}>MV Cable Route</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
           <div style={{
-            width: "30px",
+            width: "32px",
             height: "5px",
-            backgroundColor: "#00ff00",
+            backgroundColor: "#2ECC71",
             borderRadius: "2px"
           }}></div>
-          <span>Completed</span>
+          <span style={{ color: "#555" }}>Completed</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
           <div style={{
-            width: "30px",
-            height: "5px",
-            backgroundColor: "#FFA500",
+            width: "32px",
+            height: "6px",
+            backgroundColor: "#00CED1",
             borderRadius: "2px"
           }}></div>
-          <span>Measurement</span>
+          <span style={{ color: "#555" }}>Selected Segment</span>
         </div>
-        <div style={{ marginTop: "10px", fontSize: "12px", color: "#666" }}>
-          <div><b>Marking:</b> Left=Select, Right=Unselect</div>
-          <div><b>Measurement:</b> Left=Measure</div>
+        <div style={{ marginTop: "12px", fontSize: "11px", color: "#888", borderTop: "1px solid #eee", paddingTop: "10px" }}>
+          <div>🖱️ Left click = Select</div>
+          <div>🖱️ Right click = Unselect</div>
         </div>
-        <div style={{ marginTop: "10px", borderTop: "1px solid #ddd", paddingTop: "10px" }}>
+        <div style={{ marginTop: "10px", borderTop: "1px solid #eee", paddingTop: "10px" }}>
           <button
             onClick={() => setShowText(!showText)}
             title={showText ? "Hide Text Labels" : "Show Text Labels"}
@@ -1482,28 +1382,17 @@ export default function Map() {
         zoomControl={false}
       >
         <SelectionBox 
-          mode={mode}
           onSelectionComplete={handleSelectionComplete}
           onUnselectionComplete={handleUnselectionComplete}
-          onMeasurementComplete={handleMeasurementComplete}
-          onMeasurementUnselect={handleMeasurementUnselect}
           visibleLayersRef={visibleLayersRef}
           geoJsonData={geoJsonData}
           setSelectedBounds={setSelectedBounds}
           selectedSegments={selectedSegments}
           setSelectedSegments={setSelectedSegments}
-          measurementSegments={measurementSegments}
         />
         {geoJsonData.trench && (
           <GeoJSON
             data={geoJsonData.trench}
-            style={style}
-            onEachFeature={onEachFeature}
-          />
-        )}
-        {geoJsonData.trenchLine && (
-          <GeoJSON
-            data={geoJsonData.trenchLine}
             style={trenchLineStyle}
             onEachFeature={onEachTrenchLineFeature}
           />
@@ -1514,11 +1403,22 @@ export default function Map() {
             style={poliStyle}
           />
         )}
+        {/* Highlighted segment - outer cyan ring */}
         {highlightedSegmentGeoJson() && (
           <GeoJSON
-            key={`highlighted-${activeSegment}`}
+            key={`highlighted-outer-${activeSegments.join('-')}`}
             data={highlightedSegmentGeoJson()}
             style={highlightedSegmentStyle}
+            onEachFeature={onEachHighlightedFeature}
+          />
+        )}
+        {/* Highlighted segment - inner green for completed parts */}
+        {highlightedSegmentGeoJson() && (
+          <GeoJSON
+            key={`highlighted-inner-${activeSegments.join('-')}`}
+            data={highlightedSegmentGeoJson()}
+            style={highlightedCompletedInnerStyle}
+            onEachFeature={onEachHighlightedInnerFeature}
           />
         )}
         {selectedGeoJson() && (
@@ -1528,37 +1428,6 @@ export default function Map() {
             style={greenLineStyle}
           />
         )}
-        {measurementGeoJson() && (
-          <GeoJSON
-            key={`measurement-${measurementSegments.length}-${measurementSegments.reduce((acc, m) => acc + m.length, 0)}`}
-            data={measurementGeoJson()}
-            style={yellowLineStyle}
-          />
-        )}
-        {/* AutoCAD-style Dimension: Arrows at endpoints + centered label */}
-        {measurementSegments.map((measurement, index) => (
-          <React.Fragment key={`measurement-dim-${index}`}>
-            {/* Start arrow */}
-            {measurement.startPoint && (
-              <Marker
-                position={[measurement.startPoint[1], measurement.startPoint[0]]}
-                icon={createArrowIcon(measurement.angle || 0, true)}
-              />
-            )}
-            {/* End arrow */}
-            {measurement.endPoint && (
-              <Marker
-                position={[measurement.endPoint[1], measurement.endPoint[0]]}
-                icon={createArrowIcon(measurement.angle || 0, false)}
-              />
-            )}
-            {/* Centered dimension label */}
-            <Marker
-              position={[measurement.center[1], measurement.center[0]]}
-              icon={createDimensionLabelIcon(measurement.length, measurement.angle || 0)}
-            />
-          </React.Fragment>
-        ))}
         {geoJsonData.text && showText && geoJsonData.text.features.map((feature, index) => {
           if (feature.geometry.type === 'Point' && feature.properties.text) {
             const [lng, lat] = feature.geometry.coordinates;
@@ -1572,19 +1441,7 @@ export default function Map() {
           }
           return null;
         })}
-        {geoJsonData.text2 && showText && geoJsonData.text2.features.map((feature, index) => {
-          if (feature.geometry.type === 'Point' && feature.properties.text) {
-            const [lng, lat] = feature.geometry.coordinates;
-            return (
-              <Marker
-                key={`text2-${index}`}
-                position={[lat, lng]}
-                icon={createTextIcon(feature.properties.text)}
-              />
-            );
-          }
-          return null;
-        })}
+
       </MapContainer>
       
       {/* Submit Modal */}
