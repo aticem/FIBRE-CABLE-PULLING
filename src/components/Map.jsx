@@ -649,9 +649,90 @@ export default function Map() {
   const [submitModalOpen, setSubmitModalOpen] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   
+  // Note states
+  const [isAddingNote, setIsAddingNote] = useState(false);
+  const [pendingNotePosition, setPendingNotePosition] = useState(null);
+  const [noteText, setNoteText] = useState('');
+  const [savedNotes, setSavedNotes] = useState(() => {
+    // Load notes from localStorage on init
+    const stored = localStorage.getItem('mapNotes');
+    return stored ? JSON.parse(stored) : [];
+  });
+  const [editingNote, setEditingNote] = useState(null); // For editing existing notes
+  const [editNoteText, setEditNoteText] = useState('');
+  
   // Custom hooks for daily log and export
   const { dailyLog, addRecord, deleteRecord, resetLog, updateRecord } = useDailyLog();
   const { exportToExcel, isExporting } = useChartExport();
+
+  // Save notes to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('mapNotes', JSON.stringify(savedNotes));
+  }, [savedNotes]);
+
+  // Handle note submission
+  const handleNoteSubmit = () => {
+    if (pendingNotePosition && noteText.trim()) {
+      const newNote = {
+        id: Date.now(),
+        position: pendingNotePosition,
+        text: noteText.trim(),
+        date: new Date().toISOString()
+      };
+      setSavedNotes(prev => [...prev, newNote]);
+      setPendingNotePosition(null);
+      setNoteText('');
+      setIsAddingNote(false);
+    }
+  };
+
+  // Cancel note
+  const handleNoteCancel = () => {
+    setPendingNotePosition(null);
+    setNoteText('');
+    setIsAddingNote(false);
+  };
+
+  // Delete a note
+  const handleNoteDelete = (noteId) => {
+    setSavedNotes(prev => prev.filter(n => n.id !== noteId));
+    setEditingNote(null);
+  };
+
+  // Open edit modal for a note
+  const handleNoteClick = (note) => {
+    setEditingNote(note);
+    setEditNoteText(note.text);
+  };
+
+  // Update note text
+  const handleNoteUpdate = () => {
+    if (editingNote && editNoteText.trim()) {
+      setSavedNotes(prev => prev.map(n => 
+        n.id === editingNote.id ? { ...n, text: editNoteText.trim() } : n
+      ));
+      setEditingNote(null);
+      setEditNoteText('');
+    }
+  };
+
+  // Cancel editing
+  const handleEditCancel = () => {
+    setEditingNote(null);
+    setEditNoteText('');
+  };
+
+  // Map click handler for notes
+  const NoteClickHandler = () => {
+    useMapEvents({
+      click: (e) => {
+        if (isAddingNote && !pendingNotePosition) {
+          setPendingNotePosition([e.latlng.lat, e.latlng.lng]);
+        }
+      }
+    });
+    return null;
+  };
 
   useEffect(() => {
     // Load trench.geojson - for path finding and segment calculation
@@ -1350,10 +1431,6 @@ export default function Map() {
           }}></div>
           <span style={{ color: "#555" }}>Selected Segment</span>
         </div>
-        <div style={{ marginTop: "12px", fontSize: "11px", color: "#888", borderTop: "1px solid #eee", paddingTop: "10px" }}>
-          <div>🖱️ Left click = Select</div>
-          <div>🖱️ Right click = Unselect</div>
-        </div>
         <div style={{ marginTop: "10px", borderTop: "1px solid #eee", paddingTop: "10px" }}>
           <button
             onClick={() => setShowText(!showText)}
@@ -1373,6 +1450,63 @@ export default function Map() {
             {showText ? "🔤 Text On" : "🔤 Text Off"}
           </button>
         </div>
+        <div style={{ marginTop: "10px", borderTop: "1px solid #eee", paddingTop: "10px" }}>
+          <a
+            href="https://drive.google.com/file/d/17AP0CXm6aLjLTZE3GlPvC6fYEkPV2M4M/view?usp=drive_link"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "block",
+              width: "100%",
+              padding: "8px 12px",
+              border: "none",
+              borderRadius: "6px",
+              backgroundColor: "#3498db",
+              color: "white",
+              cursor: "pointer",
+              fontWeight: "bold",
+              textAlign: "center",
+              textDecoration: "none",
+              fontSize: "12px",
+              transition: "background-color 0.2s",
+              boxSizing: "border-box"
+            }}
+            onMouseEnter={(e) => e.target.style.backgroundColor = "#2980b9"}
+            onMouseLeave={(e) => e.target.style.backgroundColor = "#3498db"}
+          >
+            📐 View Original AutoCAD
+          </a>
+        </div>
+        <div style={{ marginTop: "10px", borderTop: "1px solid #eee", paddingTop: "10px" }}>
+          <button
+            onClick={() => {
+              setIsAddingNote(!isAddingNote);
+              if (isAddingNote) {
+                setPendingNotePosition(null);
+                setNoteText('');
+              }
+            }}
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              border: "none",
+              borderRadius: "6px",
+              backgroundColor: isAddingNote ? "#e74c3c" : "#f39c12",
+              color: "white",
+              cursor: "pointer",
+              fontWeight: "bold",
+              transition: "background-color 0.2s",
+              fontSize: "12px"
+            }}
+          >
+            {isAddingNote ? "❌ Cancel Note" : "📌 Add Note"}
+          </button>
+          {isAddingNote && !pendingNotePosition && (
+            <div style={{ marginTop: "8px", fontSize: "11px", color: "#e74c3c", textAlign: "center" }}>
+              👆 Click on the map to place your note
+            </div>
+          )}
+        </div>
       </div>
       <MapContainer
         whenCreated={(map) => { mapRef.current = map; }}
@@ -1381,6 +1515,7 @@ export default function Map() {
         style={{ height: "100%", width: "100%" }}
         zoomControl={false}
       >
+        <NoteClickHandler />
         <SelectionBox 
           onSelectionComplete={handleSelectionComplete}
           onUnselectionComplete={handleUnselectionComplete}
@@ -1390,17 +1525,19 @@ export default function Map() {
           selectedSegments={selectedSegments}
           setSelectedSegments={setSelectedSegments}
         />
+        {geoJsonData.poli && (
+          <GeoJSON
+            key="poli-layer"
+            data={geoJsonData.poli}
+            style={poliStyle}
+          />
+        )}
         {geoJsonData.trench && (
           <GeoJSON
+            key="trench-layer"
             data={geoJsonData.trench}
             style={trenchLineStyle}
             onEachFeature={onEachTrenchLineFeature}
-          />
-        )}
-        {geoJsonData.poli && (
-          <GeoJSON
-            data={geoJsonData.poli}
-            style={poliStyle}
           />
         )}
         {/* Highlighted segment - outer cyan ring */}
@@ -1442,7 +1579,187 @@ export default function Map() {
           return null;
         })}
 
+        {/* Saved Notes - Red Dots */}
+        {savedNotes.map((note) => (
+          <Marker
+            key={note.id}
+            position={note.position}
+            icon={new DivIcon({
+              className: 'note-marker',
+              html: `<div style="
+                width: 14px;
+                height: 14px;
+                background-color: #e74c3c;
+                border-radius: 50%;
+                border: 2px solid white;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+                cursor: pointer;
+              "></div>`,
+              iconSize: [14, 14],
+              iconAnchor: [7, 7]
+            })}
+            eventHandlers={{
+              click: () => handleNoteClick(note)
+            }}
+          />
+        ))}
+
       </MapContainer>
+      
+      {/* Note Input Modal */}
+      {pendingNotePosition && (
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          backgroundColor: 'white',
+          padding: '20px',
+          borderRadius: '12px',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
+          zIndex: 2000,
+          width: '300px'
+        }}>
+          <h3 style={{ margin: '0 0 15px 0', color: '#333' }}>📌 Add Note</h3>
+          <textarea
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            placeholder="Enter your note..."
+            style={{
+              width: '100%',
+              padding: '10px',
+              border: '1px solid #ddd',
+              borderRadius: '6px',
+              fontSize: '14px',
+              resize: 'vertical',
+              minHeight: '80px',
+              boxSizing: 'border-box'
+            }}
+            autoFocus
+          />
+          <div style={{ display: 'flex', gap: '10px', marginTop: '15px', justifyContent: 'flex-end' }}>
+            <button
+              onClick={handleNoteCancel}
+              style={{
+                padding: '8px 16px',
+                border: '1px solid #ddd',
+                borderRadius: '6px',
+                backgroundColor: '#f5f5f5',
+                cursor: 'pointer'
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleNoteSubmit}
+              disabled={!noteText.trim()}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                backgroundColor: noteText.trim() ? '#e74c3c' : '#ccc',
+                color: 'white',
+                cursor: noteText.trim() ? 'pointer' : 'not-allowed',
+                fontWeight: 'bold'
+              }}
+            >
+              ✓ Save Note
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Note Modal */}
+      {editingNote && (
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          backgroundColor: 'white',
+          padding: '20px',
+          borderRadius: '12px',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
+          zIndex: 2000,
+          width: '320px'
+        }}>
+          <h3 style={{ margin: '0 0 15px 0', color: '#333', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ 
+              width: '12px', 
+              height: '12px', 
+              backgroundColor: '#e74c3c', 
+              borderRadius: '50%',
+              display: 'inline-block'
+            }}></span>
+            Edit Note
+          </h3>
+          <div style={{ fontSize: '11px', color: '#999', marginBottom: '10px' }}>
+            📅 {new Date(editingNote.date).toLocaleDateString('en-US', { 
+              year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+            })}
+          </div>
+          <textarea
+            value={editNoteText}
+            onChange={(e) => setEditNoteText(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '10px',
+              border: '1px solid #ddd',
+              borderRadius: '6px',
+              fontSize: '14px',
+              resize: 'vertical',
+              minHeight: '80px',
+              boxSizing: 'border-box'
+            }}
+            autoFocus
+          />
+          <div style={{ display: 'flex', gap: '8px', marginTop: '15px', justifyContent: 'space-between' }}>
+            <button
+              onClick={() => handleNoteDelete(editingNote.id)}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                backgroundColor: '#ff4444',
+                color: 'white',
+                cursor: 'pointer',
+                fontWeight: 'bold'
+              }}
+            >
+              🗑️ Delete
+            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={handleEditCancel}
+                style={{
+                  padding: '8px 16px',
+                  border: '1px solid #ddd',
+                  borderRadius: '6px',
+                  backgroundColor: '#f5f5f5',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleNoteUpdate}
+                disabled={!editNoteText.trim()}
+                style={{
+                  padding: '8px 16px',
+                  border: 'none',
+                  borderRadius: '6px',
+                  backgroundColor: editNoteText.trim() ? '#27ae60' : '#ccc',
+                  color: 'white',
+                  cursor: editNoteText.trim() ? 'pointer' : 'not-allowed',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✓ Update
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Submit Modal */}
       <SubmitModal

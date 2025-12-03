@@ -1,7 +1,7 @@
 // src/components/SubmitModal.jsx
 // Günlük çalışma kaydı submit modalı
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 export default function SubmitModal({ isOpen, onClose, onSubmit, completedLength, totalLength, lastMarkedLength }) {
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -9,6 +9,12 @@ export default function SubmitModal({ isOpen, onClose, onSubmit, completedLength
   const [workers, setWorkers] = useState(1);
   const [notes, setNotes] = useState('');
   const [amountOfWork, setAmountOfWork] = useState('');
+  
+  // Draggable state
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const modalRef = useRef(null);
 
   // Modal açıldığında bugünün tarihini ve son işaretlenen uzunluğu ayarla
   useEffect(() => {
@@ -16,8 +22,42 @@ export default function SubmitModal({ isOpen, onClose, onSubmit, completedLength
       setDate(new Date().toISOString().split('T')[0]);
       // Auto-populate with last marked length from map selection
       setAmountOfWork(lastMarkedLength > 0 ? lastMarkedLength.toFixed(2) : '');
+      // Reset position when modal opens
+      setPosition({ x: 0, y: 0 });
     }
   }, [isOpen, lastMarkedLength]);
+
+  // Handle drag events
+  const handleMouseDown = (e) => {
+    if (e.target.closest('.modal-header')) {
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (isDragging) {
+      setPosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, dragStart]);
 
   if (!isOpen) return null;
 
@@ -75,6 +115,7 @@ export default function SubmitModal({ isOpen, onClose, onSubmit, completedLength
   return (
     <div 
       onClick={handleBackdropClick}
+      onMouseDown={handleMouseDown}
       style={{
         position: 'fixed',
         top: 0,
@@ -88,22 +129,43 @@ export default function SubmitModal({ isOpen, onClose, onSubmit, completedLength
         zIndex: 2000
       }}
     >
-      <div style={{
-        backgroundColor: 'white',
-        borderRadius: '12px',
-        padding: '24px',
-        width: '400px',
-        maxWidth: '90vw',
-        boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)'
-      }}>
-        <h2 style={{ 
-          margin: '0 0 20px 0', 
-          color: '#333',
-          borderBottom: '2px solid #00aa00',
-          paddingBottom: '10px'
-        }}>
-          📋 Submit Daily Work
-        </h2>
+      <div 
+        ref={modalRef}
+        style={{
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          padding: '0',
+          width: '400px',
+          maxWidth: '90vw',
+          boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
+          transform: `translate(${position.x}px, ${position.y}px)`,
+          userSelect: isDragging ? 'none' : 'auto'
+        }}
+      >
+        {/* Draggable Header */}
+        <div 
+          className="modal-header"
+          style={{ 
+            padding: '16px 24px',
+            borderBottom: '2px solid #00aa00',
+            cursor: 'move',
+            backgroundColor: '#f8f8f8',
+            borderRadius: '12px 12px 0 0',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}
+        >
+          <h2 style={{ 
+            margin: 0, 
+            color: '#333'
+          }}>
+            📋 Submit Daily Work
+          </h2>
+          <span style={{ fontSize: '11px', color: '#999' }}>⋮⋮ drag to move</span>
+        </div>
+        
+        <div style={{ padding: '24px' }}>
         
         {/* Progress Summary */}
         <div style={{
@@ -274,6 +336,7 @@ export default function SubmitModal({ isOpen, onClose, onSubmit, completedLength
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

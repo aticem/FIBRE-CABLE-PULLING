@@ -4,6 +4,28 @@ body {
   overflow: hidden;
 }
 
+/* Force default cursor everywhere - no exceptions */
+*, *::before, *::after {
+  cursor: default !important;
+}
+
+/* Override Leaflet's interactive cursor */
+.leaflet-interactive {
+  cursor: default !important;
+}
+
+.leaflet-container {
+  cursor: default !important;
+}
+
+.leaflet-grab, .leaflet-dragging {
+  cursor: default !important;
+}
+
+.leaflet-marker-icon, .leaflet-marker-shadow {
+  cursor: default !important;
+}
+
 /* Text labels should not block mouse events on the map */
 .custom-text-icon {
   pointer-events: none !important;

@@ -1,9 +1,54 @@
 // src/components/HistoryModal.jsx
 // Günlük kayıt geçmişi modalı
 
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 export default function HistoryModal({ isOpen, onClose, dailyLog, onDeleteRecord, onResetLog, onUpdateRecord, onExport, isExporting }) {
+  // Draggable state
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const modalRef = useRef(null);
+
+  // Reset position when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setPosition({ x: 0, y: 0 });
+    }
+  }, [isOpen]);
+
+  // Handle drag events
+  const handleMouseDown = (e) => {
+    if (e.target.closest('.modal-header')) {
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (isDragging) {
+      setPosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, dragStart]);
+
   if (!isOpen) return null;
 
   const handleBackdropClick = (e) => {
@@ -35,6 +80,7 @@ export default function HistoryModal({ isOpen, onClose, dailyLog, onDeleteRecord
   return (
     <div 
       onClick={handleBackdropClick}
+      onMouseDown={handleMouseDown}
       style={{
         position: 'fixed',
         top: 0,
@@ -48,29 +94,43 @@ export default function HistoryModal({ isOpen, onClose, dailyLog, onDeleteRecord
         zIndex: 2000
       }}
     >
-      <div style={{
-        backgroundColor: 'white',
-        borderRadius: '12px',
-        padding: '24px',
-        width: '600px',
-        maxWidth: '90vw',
-        maxHeight: '80vh',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)'
-      }}>
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          marginBottom: '16px',
-          borderBottom: '2px solid #0066cc',
-          paddingBottom: '10px'
-        }}>
-          <h2 style={{ margin: 0, color: '#333' }}>
-            📜 Work History
-          </h2>
+      <div 
+        ref={modalRef}
+        style={{
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          padding: '0',
+          width: '600px',
+          maxWidth: '90vw',
+          maxHeight: '80vh',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
+          transform: `translate(${position.x}px, ${position.y}px)`,
+          userSelect: isDragging ? 'none' : 'auto'
+        }}
+      >
+        {/* Draggable Header */}
+        <div 
+          className="modal-header"
+          style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            padding: '16px 24px',
+            borderBottom: '2px solid #0066cc',
+            cursor: 'move',
+            backgroundColor: '#f8f8f8',
+            borderRadius: '12px 12px 0 0'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h2 style={{ margin: 0, color: '#333' }}>
+              📜 Work History
+            </h2>
+            <span style={{ fontSize: '11px', color: '#999' }}>⋮⋮ drag to move</span>
+          </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             {dailyLog.length > 0 && (
               <>
@@ -121,6 +181,7 @@ export default function HistoryModal({ isOpen, onClose, dailyLog, onDeleteRecord
           </div>
         </div>
         
+        <div style={{ padding: '16px 24px', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {/* Summary */}
         <div style={{
           backgroundColor: '#e3f2fd',
@@ -237,6 +298,7 @@ export default function HistoryModal({ isOpen, onClose, dailyLog, onDeleteRecord
               </div>
             ))
           )}
+        </div>
         </div>
       </div>
     </div>
