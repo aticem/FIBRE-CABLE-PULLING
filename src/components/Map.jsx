@@ -485,7 +485,10 @@ const SS_SEGMENTS = [
   { id: 'SS04-SS01', from: 'SS04', to: 'SS01', label: 'SS04-SS01' },
   { id: 'SS01-CSS', from: 'SS01', to: 'CSS', label: 'SS01-CSS' },
   { id: 'SS02-CSS', from: 'SS02', to: 'CSS', label: 'SS02-CSS' },
-  { id: 'SS03-CSS', from: 'SS03', to: 'CSS', label: 'SS03-CSS' }
+  { id: 'SS03-CSS', from: 'SS03', to: 'CSS', label: 'SS03-CSS' },
+  { id: 'SS04-CSS', from: 'SS04', to: 'CSS', label: 'SS04-CSS' },
+  { id: 'SS05-CSS', from: 'SS05', to: 'CSS', label: 'SS05-CSS' },
+  { id: 'SS06-CSS', from: 'SS06', to: 'CSS', label: 'SS06-CSS' }
 ];
 
 // Build graph from trench.geojson segments for path finding
@@ -628,6 +631,33 @@ const calculatePathLength = (fromStationCoord, toStationCoord, graph) => {
   const result = findShortestPath(graph, startNearest.nodeIndex, endNearest.nodeIndex);
   
   return { length: result.length, segments: result.segments };
+};
+
+// Helper to format text labels (remove MV- prefix and suffix)
+const formatTextLabel = (text) => {
+  if (!text) return "";
+  
+  // Check if it starts with MV-
+  if (text.startsWith("MV-")) {
+    // Remove MV- prefix
+    let formatted = text.substring(3);
+    
+    // Remove .G suffix if present
+    if (formatted.endsWith(".G")) {
+      formatted = formatted.substring(0, formatted.length - 2);
+    }
+    
+    // If it still has dots (e.g. "1.C.2"), remove the first part ("1.")
+    // This handles "1.C.2" -> "C.2" while keeping "1" -> "1"
+    const firstDotIndex = formatted.indexOf('.');
+    if (firstDotIndex !== -1) {
+      return formatted.substring(firstDotIndex + 1);
+    }
+    
+    return formatted;
+  }
+  
+  return text;
 };
 
 export default function Map() {
@@ -1245,7 +1275,7 @@ export default function Map() {
       }}>
         {/* Title */}
         <div style={{ fontWeight: "600", fontSize: "13px", color: "#333" }}>
-          MV Cable Pulling Progress Tracking
+          Fibre Cable Pulling Progress Tracking
         </div>
         
         <div style={{ width: "1px", height: "24px", backgroundColor: "#ddd" }}></div>
@@ -1411,7 +1441,7 @@ export default function Map() {
             backgroundColor: "#D4A017",
             borderRadius: "2px"
           }}></div>
-          <span style={{ color: "#555" }}>MV Cable Route</span>
+          <span style={{ color: "#555" }}>Fibre Cable Route</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
           <div style={{
@@ -1430,6 +1460,11 @@ export default function Map() {
             borderRadius: "2px"
           }}></div>
           <span style={{ color: "#555" }}>Selected Segment</span>
+        </div>
+        <div style={{ marginTop: "10px", borderTop: "1px solid #eee", paddingTop: "10px" }}>
+          <div style={{ fontWeight: "600", marginBottom: "5px", color: "#333" }}>C.X</div>
+          <div style={{ fontSize: "12px", color: "#555", marginBottom: "2px" }}>C: Communication Cable</div>
+          <div style={{ fontSize: "12px", color: "#555" }}>X: Number of Circuit</div>
         </div>
         <div style={{ marginTop: "10px", borderTop: "1px solid #eee", paddingTop: "10px" }}>
           <button
@@ -1572,7 +1607,7 @@ export default function Map() {
               <Marker
                 key={index}
                 position={[lat, lng]}
-                icon={createTextIcon(feature.properties.text)}
+                icon={createTextIcon(formatTextLabel(feature.properties.text))}
               />
             );
           }
